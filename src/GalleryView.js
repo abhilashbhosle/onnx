@@ -50,12 +50,14 @@ const bottomRef=useRef(null)
     );
   }
   const scrollToIndex=(index)=>{
+    console.log(index)
     setActiveIndex(index)
     topRef.current.scrollToOffset({
         offset:index*width,
         animated:true,
     })
     if(index*(IMAGE_SIZE+SPACING)>width/2){
+      // console.log(index,(IMAGE_SIZE+SPACING),IMAGE_SIZE/2,width/2)
         bottomRef.current.scrollToOffset({
             offset:index*(IMAGE_SIZE+SPACING)+IMAGE_SIZE/2-width/2,
             animated:true
