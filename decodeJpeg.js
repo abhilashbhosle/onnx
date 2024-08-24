@@ -1,9 +1,4 @@
 import jpeg from 'jpeg-js';
-import * as tf from '@tensorflow/tfjs';
-import { Buffer } from 'buffer';
-
-// Ensure Buffer is available globally
-global.Buffer = Buffer;
 
 export function decodeJpeg(contents, channels = 3) {
   if (channels !== 3) {
@@ -29,12 +24,9 @@ export function decodeJpeg(contents, channels = 3) {
     imageData[j + 2] = data[i + 2] / 255; // B channel
   }
 
-  try {
-    const tensor = tf.tensor3d(imageData, [height, width, channels], 'float32');
-    console.log('Created Tensor:', tensor);
-    return tensor;
-  } catch (e) {
-    console.error('Error creating Tensor from image data:', e.message);
-    throw e;
-  }
+  // Tensor shape: [1, height, width, channels]
+  return {
+    data: imageData,
+    shape: [1,channels, height, width]
+  };
 }

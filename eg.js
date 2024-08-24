@@ -1,58 +1,55 @@
-import RNFS from "react-native-fs";
-import RNFetchBlob from "rn-fetch-blob";
-import * as onnx from "onnxruntime-react-native";
-import { useState, useRef, useEffect } from "react";
-import { Alert } from "react-native";
-import * as tf from "@tensorflow/tfjs";
-import { decodeJpeg } from "@tensorflow/tfjs-react-native"; // Ensure correct import
+import React, { useState, useEffect } from 'react';
+import { View, Text, Button, StyleSheet, Image, Alert } from 'react-native';
+import RNFS from 'react-native-fs';
+import { InferenceSession } from 'onnxruntime-react-native';
+import ImagePicker from 'react-native-image-crop-picker';
+import * as tf from '@tensorflow/tfjs';
+import jpeg from 'jpeg-js';
+import { decodeJpeg } from './decodeJpeg'; // Your custom decode function
 
-export const useModel = () => {
-  const classes = ["non-suspicious", "suspicious"];
-  const modelRef = useRef(null);
-  const [modelLoaded, setModelLoaded] = useState(false);
-  const [prediction, setPrediction] = useState("");
+const Test = () => {
+  const [session, setSession] = useState(null);
+  const [imageUri, setImageUri] = useState(null);
+  const [classificationResult, setClassificationResult] = useState(null);
 
   useEffect(() => {
     const initializeTensorFlow = async () => {
       await tf.ready();
-      await loadModel();
-      await tf.setBackend("cpu"); // or 'webgl'
+      console.log("TensorFlow is ready");
+
+      const initializeSession = async () => {
+        try {
+          const modelPath = `${RNFS.DocumentDirectoryPath}/model.onnx`;
+          await RNFS.copyFileAssets('model.onnx', modelPath);
+          const modelSession = await InferenceSession.create(modelPath);
+          setSession(modelSession);
+        } catch (error) {
+          console.error('Failed to load ONNX model', error);
+        }
+      };
+
+      initializeSession();
     };
+
     initializeTensorFlow();
   }, []);
 
-  const copyModelToAccessibleLocation = async () => {
-    const assetModelPath = "model.onnx";
-    const destPath = `${RNFS.DocumentDirectoryPath}/model.onnx`;
-
-    try {
-      const fileExists = await RNFetchBlob.fs.exists(destPath);
-      if (!fileExists) {
-        await RNFetchBlob.fs.cp(RNFetchBlob.fs.asset(assetModelPath), destPath);
-      }
-    } catch (error) {
-      console.error("Error copying model:", error);
-    }
+  const pickImage = () => {
+    ImagePicker.openPicker({
+      mediaType: 'photo',
+      cropping: true,
+      height: 224,
+      width: 224,
+    }).then(async (image) => {
+      const uri = image.path;
+      setImageUri(uri);
+      classifyImage(uri);
+    }).catch((error) => {
+      console.error('Error picking image:', error);
+    });
   };
 
-  const loadModel = async () => {
-    try {
-      await copyModelToAccessibleLocation();
-      const modelPath = `${RNFS.DocumentDirectoryPath}/model.onnx`;
-      const fileExists = await RNFS.exists(modelPath);
-
-      if (!fileExists) {
-        throw new Error("Model file does not exist at path: " + modelPath);
-      }
-
-      const session = await onnx.InferenceSession.create(modelPath);
-      modelRef.current = session;
-      setModelLoaded(true);
-      Alert.alert("Model Loaded");
-    } catch (e) {
-      Alert.alert("Failed to load model", `${e}`);
-    }
-  };
+  
 
   async function preprocessImage(uri) {
     console.log("PreProcessing Started");
@@ -75,7 +72,6 @@ export const useModel = () => {
       const rawImageData = await arrayBufferPromise;
       console.log("Raw image data length:", rawImageData.byteLength);
 
-      // Decode the image using TensorFlow.js
       let imgTensor;
       try {
         imgTensor = decodeJpeg(new Uint8Array(rawImageData));
@@ -84,82 +80,101 @@ export const useModel = () => {
         throw decodeError;
       }
 
-      console.log("Decoded image shape:", imgTensor.shape); // Should log [height, width, 3]
+      console.log("Decoded image shape:", imgTensor.shape);
 
-      // Verify the type and shape of the tensor before resizing
-      console.log("Type of imgTensor:", imgTensor.constructor.name);
-      console.log("Shape of imgTensor:", imgTensor.shape);
-
-      // Ensure imgTensor is a tf.Tensor before resizing
       if (!(imgTensor instanceof tf.Tensor)) {
         throw new Error("Decoded image is not a tensor");
-      }
+      }else{
 
-      // Resize the image to 224x224
       imgTensor = tf.image.resizeBilinear(imgTensor, [224, 224], true);
-      console.log("Resized image shape:", imgTensor.shape); // Should log [224, 224, 3]
+      console.log("Resized image shape:", imgTensor.shape);
 
-      // Normalize the image
-      const mean = [0.485, 0.456, 0.406];
-      const std = [0.229, 0.224, 0.225];
+      const mean = tf.tensor([0.485, 0.456, 0.406]);
+      const std = tf.tensor([0.229, 0.224, 0.225]);
+
       imgTensor = imgTensor.div(tf.scalar(255.0));
-      imgTensor = imgTensor.sub(tf.tensor(mean)).div(tf.tensor(std));
+      imgTensor = imgTensor.sub(mean).div(std);
 
-      // Transpose and add batch dimension: from [224, 224, 3] to [1, 3, 224, 224]
       imgTensor = imgTensor.transpose([2, 0, 1]).expandDims(0);
 
-      console.log("Final tensor shape:", imgTensor.shape); // Should log [1, 3, 224, 224]
+      console.log("Final tensor shape:", imgTensor.shape);
       console.log("Preprocessing finished");
       return imgTensor;
+      }
     } catch (e) {
       Alert.alert("Failed to preprocess image", `${e}`);
       throw e;
     }
   }
 
-  const predictImage = async (uri) => {
+  const classifyImage = async (uri) => {
+    if (!session) {
+      console.log('Model session is not initialized yet.');
+      return;
+    }
+
+    const tensor = await preprocessImage(uri);
+    if (!tensor) {
+      console.log('Failed to preprocess the image.');
+      return;
+    }
+
     try {
-      if (!modelRef.current) {
-        throw new Error("Model not loaded");
-      }
+      const input = { input: tensor };
+      const outputMap = await session.run(input);
 
-      const inputData = await preprocessImage(uri);
-      console.log(inputData.size, "length");
-      console.log("Input Data shape:", inputData.shape);
-
-      const feeds = {};
-      feeds[modelRef.current.inputNames[0]] = new onnx.Tensor(
-        "float32",
-        inputData.dataSync(),
-        [1, 3, 224, 224]
-      );
-      console.log(modelRef.current, "my Model");
-
-      const fetches = await modelRef.current.run(feeds);
-      console.log(fetches, "fetches");
-      const output = fetches[modelRef.current.outputNames[0]];
-
-      if (!output) {
-        Alert.alert(
-          "Failed to get output",
-          `${modelRef.current.outputNames[0]}`
-        );
-      } else {
-        const outputData = output.data;
-        const predIndex = outputData.indexOf(Math.max(...outputData));
-        setPrediction(classes[predIndex]);
-        Alert.alert(
-          "Model inference successful",
-          `Predicted outcome: ${classes[predIndex]}`
-        );
-      }
-    } catch (e) {
-      Alert.alert("Failed to run model", `${e}`);
-      console.log(e, "lalalalal");
-      throw e;
+      const outputData = outputMap['output'].data;
+      const prediction = mapOutputToLabels(outputData);
+      setClassificationResult(prediction);
+    } catch (error) {
+      console.error('Error during inference:', error);
     }
   };
 
-  return { modelLoaded, predictImage, prediction };
+  const mapOutputToLabels = (output) => {
+    const labels = ['cat', 'dog', 'car', 'flower'];
+    const predictedIndex = output.indexOf(Math.max(...output));
+    return labels[predictedIndex];
+  };
+
+  return (
+    <View style={styles.container}>
+      <Text style={styles.title}>Image Classifier</Text>
+      <Button title="Pick Image" onPress={pickImage} />
+      {imageUri && (
+        <Image
+          style={styles.image}
+          source={{ uri: imageUri }}
+        />
+      )}
+      {classificationResult && (
+        <Text style={styles.result}>Prediction: {classificationResult}</Text>
+      )}
+    </View>
+  );
 };
- 
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 20,
+  },
+  title: {
+    fontSize: 24,
+    marginBottom: 20,
+  },
+  image: {
+    width: 224,
+    height: 224,
+    marginTop: 20,
+  },
+  result: {
+    fontSize: 20,
+    marginTop: 20,
+    fontWeight: 'bold',
+  },
+});
+
+export default Test;

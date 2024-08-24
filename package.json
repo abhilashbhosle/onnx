@@ -14,7 +14,7 @@
     "@react-navigation/native": "^6.1.9",
     "@react-navigation/native-stack": "^6.9.17",
     "@tensorflow/tfjs": "^4.1.0",
-    "@tensorflow/tfjs-react-native": "^1.0.0",
+    "base64-arraybuffer": "^1.0.2",
     "buffer": "^6.0.3",
     "jpeg-js": "^0.4.4",
     "onnxruntime-react-native": "^1.19.0",
